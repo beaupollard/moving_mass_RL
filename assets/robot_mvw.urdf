@@ -141,7 +141,7 @@
     <origin rpy="0 0 0" xyz="-0.381 -0.3022 -0.07815384615384614"/>
   </joint>
 
-  <link name="pendulum">
+  <!-- <link name="pendulum">
     <visual>
       <geometry>
         <cylinder radius="0.02" length="0.4"/>
@@ -161,9 +161,9 @@
     <parent link="cart_base"/>
     <child link="pendulum"/>
     <origin rpy="0 0.1 0" xyz="0 0 0.15694736842105264"/>
-  </joint>
+  </joint> -->
 
-  <!-- <link name="payload">
+  <link name="payload">
     <visual>
       <geometry>
         <box size="0.1 0.1 0.1"/>
@@ -187,8 +187,8 @@
     <parent link="cart_base"/>
     <child link="payload"/>
     <origin rpy="0 0 0" xyz="0 0 0.15694736842105264"/>
-    <limit effort="100" lower="-0.381" upper="0.381" velocity="0.5"/>
-  </joint> -->
+    <!-- <limit effort="100" lower="-0.381" upper="0.381" velocity="0.5"/> -->
+  </joint>
 
 </robot>
 

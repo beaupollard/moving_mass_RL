@@ -38,7 +38,7 @@ class PPOBuffer:
         Append one timestep of agent-environment interaction to the buffer.
         """
         store_idx=np.where(self.ptr < self.max_size)[0]
-        # assert self.ptr < self.max_size     # buffer has to have room so you can store
+        assert self.ptr.all() < self.max_size     # buffer has to have room so you can store
         # self.obs_buf[self.ptr] = obs[:,:,0].cpu().numpy()
         # self.act_buf[self.ptr] = act#.cpu().numpy()
         # self.rew_buf[self.ptr] = rew#.cpu().numpy()
@@ -93,16 +93,19 @@ class PPOBuffer:
         # the next two lines implement the advantage normalization trick
         adv_mean, adv_std = core.normalization_trick(self.adv_buf)
         self.adv_buf = (self.adv_buf - adv_mean) / adv_std
-        data = dict(obs=self.obs_buf.reshape((self.obs_buf.shape[0]*self.obs_buf.shape[1],self.obs_buf.shape[2])), act=self.act_buf.reshape((self.act_buf.shape[0]*self.act_buf.shape[1],self.act_buf.shape[2])), ret=self.ret_buf.reshape((self.ret_buf.shape[0]*self.ret_buf.shape[1])),
-                    adv=self.adv_buf.reshape((self.adv_buf.shape[0]*self.adv_buf.shape[1])), logp=self.logp_buf.reshape((self.logp_buf.shape[0]*self.logp_buf.shape[1])))
+        data = dict(obs=self.obs_buf.swapaxes(0, 1).reshape((self.obs_buf.shape[0]*self.obs_buf.shape[1],self.obs_buf.shape[2])), act=self.act_buf.swapaxes(0, 1).reshape((self.act_buf.shape[0]*self.act_buf.shape[1],self.act_buf.shape[2])), ret=self.ret_buf.swapaxes(0, 1).reshape((self.ret_buf.shape[0]*self.ret_buf.shape[1])),
+                    adv=self.adv_buf.swapaxes(0, 1).reshape((self.adv_buf.shape[0]*self.adv_buf.shape[1])), logp=self.logp_buf.swapaxes(0, 1).reshape((self.logp_buf.shape[0]*self.logp_buf.shape[1])))
+  
+        # data = dict(obs=self.obs_buf.reshape((self.obs_buf.shape[0]*self.obs_buf.shape[1],self.obs_buf.shape[2])), act=self.act_buf.reshape((self.act_buf.shape[0]*self.act_buf.shape[1],self.act_buf.shape[2])), ret=self.ret_buf.reshape((self.ret_buf.shape[0]*self.ret_buf.shape[1])),
+        #             adv=self.adv_buf.reshape((self.adv_buf.shape[0]*self.adv_buf.shape[1])), logp=self.logp_buf.reshape((self.logp_buf.shape[0]*self.logp_buf.shape[1])))
         return {k: torch.as_tensor(v, dtype=torch.float32) for k,v in data.items()}
 
 
 
-def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0, 
-        steps_per_epoch=1000, epochs=1000, gamma=0.99, clip_ratio=0.2, pi_lr=3e-2,
-        vf_lr=1e-4, train_pi_iters=80, train_v_iters=80, lam=0.97, max_ep_len=1000,
-        target_kl=0.1, logger_kwargs=dict(), save_freq=10):
+def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10, 
+        steps_per_epoch=512, epochs=10000, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
+        vf_lr=3e-3, train_pi_iters=80, train_v_iters=80, lam=0.98, max_ep_len=1000,
+        target_kl=0.05, logger_kwargs=dict(), save_freq=10):
     """
     Proximal Policy Optimization (by clipping), 
 5e-3 1e-2
@@ -214,14 +217,16 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     seed += 10000 
     torch.manual_seed(seed)
     np.random.seed(seed)
-
+    
     # Instantiate environment
     # env = env_fn()
     obs_dim = env.observation_space.size()
-    act_dim = env.action_space.size()
+    # act_dim = env.action_space.size()
+    act_dim = torch.ones((obs_dim[0],1)).size()#env.action_space.size()
 
     # Create actor-critic module
-    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
+    # ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
+    ac = actor_critic(env.observation_space, torch.tensor([[1]]), **ac_kwargs)
     device = torch.device("cuda:0")    #Save the model to the CPU
     ac.to(device)
     # Sync params across processes
@@ -233,9 +238,9 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     # Set up experience buffer
     # local_steps_per_epoch = int(steps_per_epoch / num_procs())
-    local_steps_per_epoch = int(steps_per_epoch)
+    local_steps_per_epoch = int(4*steps_per_epoch/env.num_envs)
     buf = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
-
+    ent_weight=0.0
     # Set up function for computing PPO policy loss
     def compute_loss_pi(data,ind=[]):
         if len(ind)==0:
@@ -255,7 +260,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
         pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
 
-        return loss_pi, pi_info
+        return loss_pi-ent_weight*pi.entropy().mean(), pi_info #
 
     # Set up function for computing value loss
     def compute_loss_v(data):
@@ -272,7 +277,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
     def update():
         data = buf.get()
-
+        # obs_np=data['obs'].to(device="cpu").detach().numpy()
         pi_l_old, pi_info_old = compute_loss_pi(data)
         pi_l_old = pi_l_old.item()
         v_l_old = compute_loss_v(data).item()
@@ -284,34 +289,12 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             if kl > 1.5 * target_kl:
                 # logger.log('Early stopping at step %d due to reaching max kl.'%i)
                 break
-            if i==1:
-                print("step")
+            # if i==1:
+            #     print("step")
             loss_pi.backward()
-            # mpi_avg_grads(ac.pi)    # average grads across MPI processes
+            torch.nn.utils.clip_grad_norm_(ac.pi.parameters(), 0.5)
             pi_optimizer.step()        
-        # BS=64
-        # permutation = torch.randperm(data['obs'].size()[0])
-        # # Train policy with multiple steps of gradient descent
-        # for i in range(train_pi_iters):
-        #     for j in range(0,BS,len(permutation)):
-                
-        #         pi_optimizer.zero_grad()
-        #         loss_pi, pi_info = compute_loss_pi(data,permutation[j:j+BS])
-        #         # kl = mpi_avg(pi_info['kl'])
-        #         kl = pi_info['kl']
-        #         if kl > 1.5 * target_kl:
-        #             # logger.log('Early stopping at step %d due to reaching max kl.'%i)
-        #             break
-        #         if i==1:
-        #             print("step")
-        #         loss_pi.backward()
-        #         # mpi_avg_grads(ac.pi)    # average grads across MPI processes
-        #         pi_optimizer.step()
-            # if kl > 1.5 * target_kl:
-            #     # logger.log('Early stopping at step %d due to reaching max kl.'%i)
-            #     break
 
-        # logger.store(StopIter=i)
 
         # Value function learning
         for i in range(train_v_iters):
@@ -319,14 +302,12 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             loss_v = compute_loss_v(data)
             loss_v.backward()
             # mpi_avg_grads(ac.v)    # average grads across MPI processes
+            torch.nn.utils.clip_grad_norm_(ac.v.parameters(), 0.5)
             vf_optimizer.step()
 
         # Log changes from update
-        return pi_info['kl'], pi_info_old['ent'], pi_info['cf'], loss_v.item()-v_l_old, loss_pi.item()-pi_l_old
-        # logger.store(LossPi=pi_l_old, LossV=v_l_old,
-        #              KL=kl, Entropy=ent, ClipFrac=cf,
-        #              DeltaLossPi=(loss_pi.item() - pi_l_old),
-        #              DeltaLossV=(loss_v.item() - v_l_old))
+        return pi_info['kl'], pi_info_old['ent'], pi_info['cf'], loss_v.item()-v_l_old, loss_pi.item()-pi_l_old, data['obs'][-1,1].item()
+
 
     # Prepare for interaction with environment
     start_time = time.time()
@@ -336,16 +317,19 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
     for epoch in range(epochs):
         ep_ret_rec=[]
         ep_len_rec=[]
-        for t in range(local_steps_per_epoch):
+        buff_count=0
+        for t in range(steps_per_epoch):
 
             a, v, logp = ac.step(torch.as_tensor(o[:,:,0], dtype=torch.float32))
             
             next_o, r, d, _, _ = env.step(a)
             ep_ret += r
             ep_len += 1
-
+                        
+            
             # save and log
             buf.store(o, a.cpu().numpy(), r, v, logp)
+            
             # logger.store(VVals=v)
             
             # Update obs (critical!)
@@ -353,31 +337,41 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
 
             # timeout = ep_len == max_ep_len
             terminal = d #or timeout
-            epoch_ended = t==local_steps_per_epoch-1
+            # epoch_ended = t==steps_per_epoch-1
             
             if terminal.size()[0]>0:
+
                 v = v*0
+                # v=-10000*np.ones_like(v)
                 buf.finish_path(v,fin_ids=terminal.cpu().numpy())
                 # if terminal:
                 #     # only save EpRet / EpLen if trajectory finished
                 #     logger.store(EpRet=ep_ret, EpLen=ep_len)
                 ep_len_rec.append(ep_len)
                 ep_ret_rec.append(ep_ret)
-                o, ep_ret, ep_len = env.reset(terminal.cpu().numpy()), 0, 0                
+                o, ep_ret, ep_len = env.reset(terminal.cpu().numpy()), 0, 0 
 
-            if epoch_ended:
-                # if epoch_ended and not(terminal):
-                #     print('Warning: trajectory cut off by epoch at %d steps.'%ep_len, flush=True)
-                # if trajectory didn't reach terminal state, bootstrap value target
-                # if epoch_ended:
+            if t==steps_per_epoch-1:
                 _, v, _ = ac.step(torch.as_tensor(o[:,:,0], dtype=torch.float32))
-                # else:
-                #     v = v*0
                 buf.finish_path(v,fin_ids=np.arange(0,len(o)))
-                # if terminal:
-                #     # only save EpRet / EpLen if trajectory finished
-                #     logger.store(EpRet=ep_ret, EpLen=ep_len)
+                try:
+                    ep_ret_print=torch.clone(ep_ret)
+                except:
+                    pass
                 o, ep_ret, ep_len = env.reset(), 0, 0
+
+            elif buff_count==local_steps_per_epoch-1:
+                _, v, _ = ac.step(torch.as_tensor(o[:,:,0], dtype=torch.float32))
+                buf.finish_path(v,fin_ids=np.arange(0,len(o)))
+
+                # ep_ret_print=torch.clone(ep_ret)
+                _,_,_,delta_v,delta_pi,cos_p = update()
+                buff_count=0
+            else:
+                buff_count+=1
+
+                
+            
 
 
         # Save model
@@ -386,7 +380,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
             # logger.save_state({'env': env}, None)
 
         # Perform PPO update!
-        _,_,_,delta_v,delta_pi = update()
+        _,_,_,delta_v,delta_pi,cos_p = update()
         # max_len=0
         # for ii in range(len(buf.obs_buf[0,:,0])):
         #     diff_obs=buf.obs_buf[1:t,ii,3]-buf.obs_buf[:t-1,ii,3]
@@ -399,8 +393,8 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=0,
         # if epoch>100:
         #     vf_lr_decay.step()
         #     pi_lr_decay.step()
-
-        print(epoch, sum(ep_len_rec)/len(ep_len_rec), delta_v, delta_pi)    
+        print(epoch, ep_ret_print.mean().item(), cos_p, delta_v, delta_pi)
+        # print(epoch, sum(ep_len_rec)/len(ep_len_rec), delta_v, delta_pi)    
 
         # Log info about epoch
         # logger.log_tabular('Epoch', epoch)

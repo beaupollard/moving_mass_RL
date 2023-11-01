@@ -91,13 +91,17 @@ class MLPGaussianActor(Actor):
     def __init__(self, obs_dim, act_dim, hidden_sizes, activation):
         super().__init__()
         log_std = -0.5 * np.ones(act_dim, dtype=np.float32)
+        # self.log_std = torch.as_tensor(log_std).to(device="cuda:0")#torch.nn.Parameter(torch.as_tensor(log_std))
         self.log_std = torch.nn.Parameter(torch.as_tensor(log_std))
         self.mu_net = mlp([obs_dim] + list(hidden_sizes) + [act_dim], activation)
+        # for p in self.mu_net.parameters():
+        #     p.data.fill_(0)
+        # print("stop")
 
     def _distribution(self, obs):
         mu = self.mu_net(obs)
         std = torch.exp(self.log_std)
-        return Normal(mu, std)
+        return Normal(mu.clip(min=-5.,max=5.), std)
 
     def _log_prob_from_distribution(self, pi, act):
         return pi.log_prob(act).sum(axis=-1)    # Last axis sum needed for Torch Normal distribution
@@ -118,7 +122,7 @@ class MLPActorCritic(nn.Module):
 
 
     def __init__(self, observation_space, action_space, 
-                 hidden_sizes=(128,128), activation=nn.Tanh):
+                 hidden_sizes=(64,64), activation=nn.Tanh):
         super().__init__()
 
         obs_dim = observation_space.shape[1]
@@ -137,6 +141,7 @@ class MLPActorCritic(nn.Module):
         with torch.no_grad():
             pi = self.pi._distribution(obs)
             a = pi.sample()
+            
             logp_a = self.pi._log_prob_from_distribution(pi, a)
             v = self.v(obs)
         # return a, v, logp_a

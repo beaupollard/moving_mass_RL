@@ -5,9 +5,10 @@ import numpy as np
 # from mppi_ctrl import MPPI
 
 class env():
-    def __init__(self,tracked_dofs=[],tracked_root=[],viewer_flag=False):
+    def __init__(self,tracked_dofs_pos=[],tracked_dofs_vel=[],tracked_root=[],viewer_flag=False):
         
-        self.tracked_dofs=tracked_dofs  # Dof's to track with costs
+        self.tracked_dofs_pos=tracked_dofs_pos  # Dof's to track with costs
+        self.tracked_dofs_vel=tracked_dofs_vel  # Dof's to track with costs
         self.tracked_root=tracked_root  # Root Dof's to track with costs
         self.viewer_flag = viewer_flag
 
@@ -17,7 +18,10 @@ class env():
         gym = gymapi.acquire_gym()
 
         sim_parms = gymapi.SimParams()
-        sim_parms.dt = 0.01
+        sim_parms.dt = 0.02
+        # gymapi.FlexParams.static_friction=1.0
+        # gymapi.FlexParams.deterministic_mode=True 
+        # sim_parms.physx.num_velocity_iterations=5
         sim_parms.physx.use_gpu = True
         sim_parms.use_gpu_pipeline = True
         if sim_parms.use_gpu_pipeline == True:
@@ -71,10 +75,10 @@ class env():
         dof_positions = dof_states['pos']
 
         # set up the env grid
-        num_envs = int(2**0)
+        num_envs = int(2**5)
         actors_per_env = 1
         dofs_per_actor = 11
-        num_per_row = 8
+        num_per_row = 4
         spacing = 2.5
         env_lower = gymapi.Vec3(-spacing, 0.0, -spacing)
         env_upper = gymapi.Vec3(spacing, spacing, spacing)
@@ -129,13 +133,17 @@ class env():
         self.sim = sim
         self.num_envs=num_envs
         self.num_dofs = num_dofs
-        self.weights=torch.zeros(self.num_envs,len(self.tracked_root)+len(self.tracked_dofs)*2,len(self.tracked_root)+len(self.tracked_dofs)*2).to(self.device)
-        self.weights[:]=torch.diag(torch.tensor([-0.05,-0.05,-.05,1.0,-0.05],dtype=torch.float))
+        self.weights=torch.zeros(self.num_envs,len(self.tracked_root)+len(self.tracked_dofs_vel)+len(self.tracked_dofs_pos),len(self.tracked_root)+len(self.tracked_dofs_pos)+len(self.tracked_dofs_vel)).to(self.device)
+        # self.weights[:]=torch.diag(torch.tensor([-0.0,-0.1,-.1,1.0,-0.],dtype=torch.float))
+        # self.weights[:]=torch.diag(torch.tensor([-0.01,-0.01,-.01,1.0,-0.001,-0.001,-0.001,-0.001,-0.01],dtype=torch.float))
+        # self.weights[:]=torch.diag(torch.tensor([-0.5,1.0,-0.01,-0.1],dtype=torch.float))
+        self.weights[:]=torch.diag(torch.tensor([-5.0,1.0,-0.00,-0.0],dtype=torch.float))
         self.step()
         self.reset()
         self.observation_space = self.tracked_states_vec
         self.action_space = torch.zeros((self.num_envs,4),dtype=torch.float,device=self.device) 
         self.prev_vel = torch.zeros((self.num_envs,4),dtype=torch.float,device=self.device) 
+        self.prev_action = torch.zeros((self.num_envs,4),dtype=torch.float,device=self.device) 
 
     def _render(self):
         self.gym.step_graphics(self.sim)
@@ -147,20 +155,26 @@ class env():
 
     def _compute_reward(self):
         # pendulum position is 3
-        return torch.sum(torch.bmm(self.weights,self.tracked_states_vec),dim=1)#torch.bmm(self.tracked_states_vec.mT,torch.bmm(self.weights,self.tracked_states_vec))
+        return torch.sum(torch.bmm(self.weights,self.tracked_states_vec),dim=1)#-0.1*torch.norm(self.dof_force[:,:4],dim=1).reshape((self.dof_force.size()[0]),1)
         
     def _terminal_flag(self):
-        return torch.where(self.tracked_states_vec[:,3,0]<0.5)[0]
+        # return torch.where(self.tracked_states_vec[:,3,0]<0.5)[0]
+        return torch.where(self.tracked_states_vec[:,0,0]>0.65)[0]
         # print('teop')
         # if self.tracked_states_vec[:,3,0]:
         #     return True
         # else:
         #     return False
     def pd_ctrl(self,des_action):
-        kp=10.
-        kd=0.1
-        action=kp*(des_action-self.dof_states_vec[0,:4,1])-kd*(self.dof_states_vec[0,:4,1]-self.prev_vel)
-        self.prev_vel=torch.clone(self.dof_states_vec[0,:4,1])
+        kp=5.
+        kd=0.
+        # des_action.clip(min=-5.,max=5.)
+        # action=1*des_action*torch.ones((des_action.size()[0],4),device="cuda:0",dtype=torch.float32)
+        des_action=des_action*torch.ones((des_action.size()[0],4),device="cuda:0",dtype=torch.float32)
+        action=kp*(des_action*torch.ones((des_action.size()[0],4),device="cuda:0",dtype=torch.float32)-self.dof_states_vec[:,:4,1])-kd*(self.dof_states_vec[:,:4,1]-self.prev_vel)
+        
+        # action=kp*(des_action-self.dof_states_vec[:,:4,1])-kd*(self.dof_states_vec[:,:4,1]-self.prev_vel)
+        self.prev_vel=torch.clone(self.dof_states_vec[:,:4,1])
         return action
 
     def step(self,action=[]):
@@ -190,8 +204,12 @@ class env():
         current_dof_state=torch.clone(self.dof_states_vec)
         for i in idx:
             current_root_state[i,:]=torch.clone(self.prev_root_state[i])
+            
             # current_dof_state[i,:,:]=torch.clone(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)[i]+3.14)
-            current_dof_state[i,:,:]=torch.clone(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)[i]+0.1*torch.rand((self.num_dofs,2),dtype=torch.float,device=self.device))
+            # current_dof_state[i,:,:]=torch.clone(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)[i]-1.5*(torch.rand((self.num_dofs,2),dtype=torch.float,device=self.device)-0.5))
+            current_dof_state[i,-1,0]=3.14+0.5*(torch.rand((1,1),dtype=torch.float,device=self.device)-0.5)
+            current_dof_state[i,-1,1]=1.*(torch.rand((1,1),dtype=torch.float,device=self.device)-0.5)
+            # current_dof_state[i,-1,0]=3.14*(torch.rand((1,1),dtype=torch.float,device=self.device)-0.5)
         self.gym.set_actor_root_state_tensor(self.sim,gymtorch.unwrap_tensor(current_root_state))
         self.gym.set_dof_state_tensor(self.sim,gymtorch.unwrap_tensor(current_dof_state))       
         # self.gym.set_actor_root_state_tensor(self.sim,gymtorch.unwrap_tensor(self.prev_root_state.view(self.num_envs,13)))
@@ -203,8 +221,9 @@ class env():
     def _refresh_state(self):
         self.gym.refresh_actor_root_state_tensor(self.sim)
         self.gym.refresh_dof_state_tensor(self.sim)
-        self.tracked_states_vec=torch.cat((torch.abs(self.root_states_vec[:,0,self.tracked_root]),self.dof_states_vec[:,self.tracked_dofs,0],torch.abs(self.dof_states_vec[:,self.tracked_dofs,1])),1).view(self.num_envs,2*len(self.tracked_dofs)+len(self.tracked_root),1)
-        self.tracked_states_vec[:,3,0]=torch.cos(self.tracked_states_vec[:,3,0])
+        self.tracked_states_vec=torch.cat((torch.abs(self.root_states_vec[:,0,self.tracked_root]),self.dof_states_vec[:,self.tracked_dofs_pos,0],torch.abs(self.dof_states_vec[:,self.tracked_dofs_vel,1])),1).view(self.num_envs,len(self.tracked_dofs_vel)+len(self.tracked_dofs_pos)+len(self.tracked_root),1)
+        # self.tracked_states_vec[:,3,0]=1+torch.cos(self.tracked_states_vec[:,3,0])
+        self.tracked_states_vec[:,1,0]=1+torch.cos(self.tracked_states_vec[:,1,0])
 # rec_rew=[]
 # if __name__ == '__main__':
 #     tracked_dofs=[4]
