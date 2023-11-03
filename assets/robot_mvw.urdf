@@ -53,7 +53,7 @@
     </inertial>
   </link>
   <joint name="cart_to_right_front_wheel" type="revolute">
-    <limit lower="-10000" upper="10000" effort="5" velocity="10"/>
+    <limit lower="-10000" upper="10000" effort="15" velocity="15"/>
     <axis rpy="0 0 0" xyz="0 1 0"/>
     <parent link="cart_base"/>
     <child link="right_front_wheel"/>
@@ -80,7 +80,7 @@
     </inertial>
   </link>
   <joint name="cart_to_left_front_wheel" type="revolute">
-    <limit lower="-10000" upper="10000" effort="5" velocity="10"/>
+    <limit lower="-10000" upper="10000" effort="15" velocity="15"/>
     <axis rpy="0 0 0" xyz="0 1 0"/>
     <parent link="cart_base"/>
     <child link="left_front_wheel"/>
@@ -107,7 +107,7 @@
     </inertial>
   </link>
   <joint name="cart_to_right_back_wheel" type="revolute">
-    <limit lower="-10000" upper="10000" effort="5" velocity="10"/>
+    <limit lower="-10000" upper="10000" effort="15" velocity="15"/>
     <axis rpy="0 0 0" xyz="0 1 0"/>
     <parent link="cart_base"/>
     <child link="right_back_wheel"/>
@@ -134,7 +134,7 @@
     </inertial>
   </link>
   <joint name="cart_to_left_back_wheel" type="revolute">
-    <limit lower="-10000" upper="10000" effort="5" velocity="10"/>
+    <limit lower="-10000" upper="10000" effort="15" velocity="15"/>
     <axis rpy="0 0 0" xyz="0 1 0"/>
     <parent link="cart_base"/>
     <child link="left_back_wheel"/>
