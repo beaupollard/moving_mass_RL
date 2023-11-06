@@ -104,7 +104,7 @@ class PPOBuffer:
 
 def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10, 
         steps_per_epoch=512, epochs=10000, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
-        vf_lr=3e-3, train_pi_iters=80, train_v_iters=80, lam=0.98, max_ep_len=1000,
+        vf_lr=1e-4, train_pi_iters=10, train_v_iters=10, lam=0.98, max_ep_len=1000,
         target_kl=0.05, logger_kwargs=dict(), save_freq=10):
     """
     Proximal Policy Optimization (by clipping), 
@@ -221,14 +221,15 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
     # Instantiate environment
     # env = env_fn()
     obs_dim = env.observation_space.size()
-    # act_dim = env.action_space.size()
-    act_dim = torch.ones((obs_dim[0],1)).size()#env.action_space.size()
+    act_dim = env.action_space.size()
+    # act_dim = torch.ones((obs_dim[0],5)).size()#env.action_space.size()
 
     # Create actor-critic module
     # ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
-    ac = actor_critic(env.observation_space, torch.tensor([[1]]), **ac_kwargs)
+    ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
     device = torch.device("cuda:0")    #Save the model to the CPU
     ac.to(device)
+    ac.load_state_dict(torch.load('1105_model_good')) 
     # Sync params across processes
     # sync_params(ac)
 
@@ -240,7 +241,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
     # local_steps_per_epoch = int(steps_per_epoch / num_procs())
     local_steps_per_epoch = int(4*steps_per_epoch/env.num_envs)
     buf = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
-    ent_weight=0.0
+    ent_weight=0.01
     # Set up function for computing PPO policy loss
     def compute_loss_pi(data,ind=[]):
         if len(ind)==0:
@@ -255,12 +256,12 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
 
         # Useful extra info
         approx_kl = (logp_old - logp).mean().item()
-        ent = pi.entropy().mean().item()
+        ent = pi.entropy().mean().item() # 1/2*torch.log(2*math.pi*pi.scale[0]**2)+1/2
         clipped = ratio.gt(1+clip_ratio) | ratio.lt(1-clip_ratio)
         clipfrac = torch.as_tensor(clipped, dtype=torch.float32).mean().item()
         pi_info = dict(kl=approx_kl, ent=ent, cf=clipfrac)
 
-        return loss_pi-ent_weight*pi.entropy().mean(), pi_info #
+        return loss_pi, pi_info #+torch.norm(pi.scale[:,-1])
 
     # Set up function for computing value loss
     def compute_loss_v(data):
@@ -291,6 +292,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
                 break
             # if i==1:
             #     print("step")
+            loss_pi-=ent_weight*pi_info['ent']
             loss_pi.backward()
             torch.nn.utils.clip_grad_norm_(ac.pi.parameters(), 0.5)
             pi_optimizer.step()        
@@ -357,7 +359,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
                 try:
                     ep_ret_print=torch.clone(ep_ret)
                 except:
-                    pass
+                    ep_ret_print=torch.clone(ep_ret_rec[-1])
                 o, ep_ret, ep_len = env.reset(), 0, 0
 
             elif buff_count==local_steps_per_epoch-1:
@@ -376,7 +378,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):
-            print('save state here')
+            torch.save(ac.state_dict(), './1104_model')  
             # logger.save_state({'env': env}, None)
 
         # Perform PPO update!

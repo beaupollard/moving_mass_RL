@@ -6,9 +6,9 @@ from isaacgym import gymutil, gymapi
 from scipy import signal
 
 if __name__ == '__main__':
-    tracked_dofs_vel=[0,4]
+    tracked_dofs_vel=[0,1,2,3,4]
     tracked_dofs_pos=[4]
-    tracked_root=[4]   
+    tracked_root=[4,5,7,8]
     envs=env(tracked_dofs_pos=tracked_dofs_pos,tracked_dofs_vel=tracked_dofs_vel,tracked_root=tracked_root,viewer_flag=True)
     envs._setup_env()
     envs.reset()
@@ -19,8 +19,8 @@ if __name__ == '__main__':
     for i in range(10000):
         # a=6*torch.ones((1,4),dtype=torch.float32,device='cuda:0')
         # a=torch.tensor([[5.,5.,5.,5.]],dtype=torch.float32,device='cuda:0')
-        a=10*torch.ones((32,1),dtype=torch.float32,device='cuda:0')
-        next_o, r, d, _, vel_rec[i,:], pos_rec[i]  = envs.step(a)
+        a=0*torch.ones((32,1),dtype=torch.float32,device='cuda:0')
+        next_o, r, d, _, _ = envs.step(a)
         # next_o, r, d, _, _ = envs.step(a)
         # state_rec[i,:]=next_o.to(device="cpu").detach().numpy().flatten()
     print("stop")
