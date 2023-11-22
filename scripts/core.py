@@ -123,7 +123,7 @@ class MLPActorCritic(nn.Module):
 
 
     def __init__(self, observation_space, action_space, 
-                 hidden_sizes=(128,128), activation=nn.Tanh):
+                 hidden_sizes=(128,128), activation=nn.ELU):
         super().__init__()
 
         obs_dim = observation_space.shape[1]

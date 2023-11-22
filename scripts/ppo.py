@@ -103,8 +103,8 @@ class PPOBuffer:
 
 
 def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10, 
-        steps_per_epoch=512, epochs=10000, gamma=0.99, clip_ratio=0.2, pi_lr=3e-4,
-        vf_lr=1e-4, train_pi_iters=10, train_v_iters=10, lam=0.98, max_ep_len=1000,
+        steps_per_epoch=2*512, epochs=10000, gamma=0.99, clip_ratio=0.2, pi_lr=6e-4,
+        vf_lr=1e-4, train_pi_iters=5, train_v_iters=5, lam=0.98, max_ep_len=1000,
         target_kl=0.05, logger_kwargs=dict(), save_freq=10):
     """
     Proximal Policy Optimization (by clipping), 
@@ -229,7 +229,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
     ac = actor_critic(env.observation_space, env.action_space, **ac_kwargs)
     device = torch.device("cuda:0")    #Save the model to the CPU
     ac.to(device)
-    ac.load_state_dict(torch.load('1105_model_good')) 
+    # ac.load_state_dict(torch.load('1107_model')) 
     # Sync params across processes
     # sync_params(ac)
 
@@ -239,9 +239,9 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
 
     # Set up experience buffer
     # local_steps_per_epoch = int(steps_per_epoch / num_procs())
-    local_steps_per_epoch = int(4*steps_per_epoch/env.num_envs)
+    local_steps_per_epoch = int(50)#int(4*steps_per_epoch/env.num_envs)
     buf = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
-    ent_weight=0.01
+    ent_weight=0.001
     # Set up function for computing PPO policy loss
     def compute_loss_pi(data,ind=[]):
         if len(ind)==0:
@@ -378,7 +378,7 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
 
         # Save model
         if (epoch % save_freq == 0) or (epoch == epochs-1):
-            torch.save(ac.state_dict(), './1104_model')  
+            torch.save(ac.state_dict(), './1107_model')  
             # logger.save_state({'env': env}, None)
 
         # Perform PPO update!

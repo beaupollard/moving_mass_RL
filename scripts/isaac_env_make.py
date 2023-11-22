@@ -85,14 +85,14 @@ class env():
         dof_positions = dof_states['pos']
 
         # set up the env grid
-        num_envs = int(2**8)
+        num_envs = int(2**7)#9
         actors_per_env = 1
         dofs_per_actor = 11
-        num_per_row = 3
-        spacing = 1.0
+        num_per_row = 6
+        spacing = 0.65
         env_lower = gymapi.Vec3(-spacing, 0.0, -spacing)
         env_upper = gymapi.Vec3(spacing, spacing, spacing)
-
+        self.des_vel = torch.zeros((num_envs,2),dtype=torch.float,device=self.device)
         # cache useful handles
         self.envs = []
         self.actor_handles = []
@@ -130,10 +130,10 @@ class env():
         self.env_origin=torch.tensor(np.array(self.env_origin),device="cuda:0",dtype=torch.float32)
         # create all available terrain types
         num_terains = 1
-        terrain_width = 55.
-        terrain_length = 160.
-        horizontal_scale = 0.05  # [m]
-        vertical_scale = 0.3  # [m]
+        terrain_width = 60.
+        terrain_length = 80.#160.
+        horizontal_scale = 0.1  # [m]
+        vertical_scale = 0.4  # [m]
         num_rows = int(terrain_width/horizontal_scale)
         num_cols = int(terrain_length/horizontal_scale)
         heightfield = np.zeros((num_terains*num_rows, num_cols), dtype=np.int16)
@@ -164,8 +164,8 @@ class env():
         # tm_params.transform.p.y = -1.
         # tm_params.transform.r.w=math.cos(math.pi/4)
         # tm_params.transform.r.x=math.cos(math.pi/4)
-        off_x=-20.
-        off_y=-5.
+        off_x=-37.5#-22
+        off_y=-25.
         off_z=-0.4
       
         tm_params.transform.p.x = off_x
@@ -229,8 +229,8 @@ class env():
         self.wb_state=self.root_states_vec[:,0,:3]+self.env_origin
         self.wb_ind=torch.zeros((num_envs,2),device="cuda:0",dtype=torch.int16)
         for i in range(num_envs):
-            self.wb_ind[i,0]=torch.searchsorted(self.tt[:,0,0], self.wb_state[i,0]).item()
-            self.wb_ind[i,1]=torch.searchsorted(self.tt[0,:,1], self.wb_state[i,1]).item()
+            self.wb_ind[i,0]=torch.searchsorted(self.tt[:,0,0].contiguous(), self.wb_state[i,0]).item()
+            self.wb_ind[i,1]=torch.searchsorted(self.tt[0,:,1].contiguous(), self.wb_state[i,1]).item()
         self.wb_ind=self.wb_ind.to(device="cpu").detach().numpy()
         stride_length=step_length/horizontal_scale/(length-1)
         stride_width=step_width/horizontal_scale/(width-1)
@@ -244,10 +244,11 @@ class env():
         self.reset()       
         
         # y_ind=torch.searchsorted(self.tt[0,:,1], x[1]+ypts).item()
-        self.observation_space = torch.hstack((self.tracked_states_vec,self.scan_dot_buf.reshape(self.num_envs,-1,1)))
+        self.observation_space = torch.hstack((torch.hstack((self.tracked_states_vec,self.des_vel.unsqueeze(2))),self.scan_dot_buf.reshape(self.num_envs,-1,1)))
         self.action_space = torch.zeros((self.num_envs,5),dtype=torch.float,device=self.device) 
         self.prev_vel = torch.zeros((self.num_envs,4),dtype=torch.float,device=self.device) 
         self.prev_action = torch.zeros((self.num_envs,5),dtype=torch.float,device=self.device) 
+        
 
     def _render(self):
         self.gym.step_graphics(self.sim)
@@ -259,8 +260,8 @@ class env():
 
     def _compute_reward(self):
         # pendulum position is 3
-        rew_speed=10.*torch.exp(-(self.tracked_states_vec[:,2]-3.)**2)
-        rew_torque=-0.001*torch.norm(self.dof_forces[:,:4],dim=1).unsqueeze(dim=1)-0.0001*torch.abs(self.tracked_states_vec[:,-1]).unsqueeze(dim=1)
+        rew_speed=10.*torch.exp(-(self.tracked_states_vec[:,2]-self.des_vel[:,0])**2-(self.tracked_states_vec[:,3]-self.des_vel[:,1])**2)
+        rew_torque=-0.001*torch.norm(self.dof_forces[:,:4],dim=1).unsqueeze(dim=1)-0.00001*torch.abs(self.tracked_states_vec[:,-1]).unsqueeze(dim=1)
         rew_ori=-0.001*self.tracked_states_vec[:,1]**2
         return rew_speed+rew_torque+rew_ori#torch.sum(torch.bmm(self.weights,(self.tracked_states_vec-self.des_state)),dim=1)#-0.1*torch.norm(self.dof_force[:,:4],dim=1).reshape((self.dof_force.size()[0]),1)
         
@@ -302,9 +303,10 @@ class env():
         self.gym.fetch_results(self.sim, True)
         self._refresh_state()
         try:
-            next_obs=torch.hstack((self.tracked_states_vec,self.scan_dot_buf.reshape(self.num_envs,-1,1)))
+            next_obs=torch.hstack((torch.hstack((self.tracked_states_vec,self.des_vel.unsqueeze(2))),self.scan_dot_buf.reshape(self.num_envs,-1,1)))
         except:
-            next_obs=torch.hstack((self.tracked_states_vec,torch.zeros_like(self.scan_dot_buf.reshape(self.num_envs,-1,1))))
+            #torch.hstack((torch.hstack((self.tracked_states_vec,self.des_vel.unsqueeze(2))),torch.zeros_like(self.scan_dot_buf.reshape(self.num_envs,-1,1))))
+            next_obs=torch.hstack((torch.hstack((self.tracked_states_vec,self.des_vel.unsqueeze(2))),torch.zeros_like(self.scan_dot_buf.reshape(self.num_envs,-1,1))))#torch.hstack((self.tracked_states_vec,torch.zeros_like(self.scan_dot_buf.reshape(self.num_envs,-1,1))))
         reward = self._compute_reward()
         done = self._terminal_flag()
         info=[]
@@ -321,6 +323,11 @@ class env():
         current_dof_state=torch.clone(self.dof_states_vec)
         for i in idx:
             current_root_state[i,:]=torch.clone(self.prev_root_state[i])
+            theta=3.14*(torch.rand((1),dtype=torch.float,device=self.device)-0.5)
+            current_root_state[i,5]=torch.sin(theta/2)
+            current_root_state[i,6]=torch.cos(theta/2)
+            theta_vel=3.14*(torch.rand((1),dtype=torch.float,device=self.device)-0.5)
+            self.des_vel[i,0] = 1.5*(torch.rand((1),dtype=torch.float,device=self.device)+1)
             
             # current_dof_state[i,:,:]=torch.clone(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)[i]+3.14)
             # current_dof_state[i,:,:]=torch.clone(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)[i]-1.5*(torch.rand((self.num_dofs,2),dtype=torch.float,device=self.device)-0.5))
@@ -332,7 +339,7 @@ class env():
         # self.gym.set_actor_root_state_tensor(self.sim,gymtorch.unwrap_tensor(self.prev_root_state.view(self.num_envs,13)))
         # self.gym.set_dof_state_tensor(self.sim,gymtorch.unwrap_tensor(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)+0.5*torch.rand((self.num_envs,self.num_dofs,2),dtype=torch.float,device=self.device)))
         self._refresh_state()
-        next_obs=torch.hstack((self.tracked_states_vec,self.scan_dot_buf.reshape(self.num_envs,-1,1)))#self.tracked_states_vec
+        next_obs=torch.hstack((torch.hstack((self.tracked_states_vec,self.des_vel.unsqueeze(2))),self.scan_dot_buf.reshape(self.num_envs,-1,1)))#self.tracked_states_vec
         return next_obs
     
     def _refresh_state(self):
@@ -351,8 +358,8 @@ class env():
 
         for i in range(self.num_envs):
             try:
-                self.wb_ind[i,0]+=torch.searchsorted(self.tt[self.wb_ind[i,0]-3:self.wb_ind[i,0]+3,0,0], self.wb_state[i,0]).item()-3
-                self.wb_ind[i,1]+=torch.searchsorted(self.tt[0,self.wb_ind[i,1]-3:self.wb_ind[i,1]+3,1], self.wb_state[i,1]).item()-3
+                self.wb_ind[i,0]+=torch.searchsorted(self.tt[self.wb_ind[i,0]-3:self.wb_ind[i,0]+3,0,0].contiguous(), self.wb_state[i,0]).item()-3
+                self.wb_ind[i,1]+=torch.searchsorted(self.tt[0,self.wb_ind[i,1]-3:self.wb_ind[i,1]+3,1].contiguous(), self.wb_state[i,1]).item()-3
                 self.scan_dot_buf[i,:,:]=self.tt[self.wb_ind[i,0]+self.stride_ind[:,0],self.wb_ind[i,1]+self.stride_ind[:,1],:]-self.wb_state[i]
             except:
                 pass

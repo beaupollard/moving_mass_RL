@@ -14,8 +14,20 @@ from isaacgym import gymutil, gymapi
 from math import sqrt
 
 def step_terrain(terrain,obstacle_height=1.,obstacle_width=2.):
-    heightfield=np.zeros((terrain.width,terrain.length),dtype='int16')
-    heightfield[:int(terrain.width/2),:]=-1
+    heightfield=0*np.ones((terrain.width,terrain.length),dtype='int16')
+    heightfield[int(terrain.width/4):int(3*terrain.width/4),int(terrain.length/4):int(3*terrain.length/4)]=-1
+    # num_steps = 3
+    # for i in range(num_steps-1):
+    # num_steps=3
+    # indx_wid=np.linspace(0,terrain.width/2,num_steps+1,dtype=int)
+    # step_height=1
+    # midp=int(terrain.width/2)
+    # for i in range(num_steps-1):
+    #     heightfield[indx_wid[i+1]:indx_wid[i+2],indx_wid[i+1]:indx_wid[i+2]]=step_height
+    #     step_height+=1        
+    # heightfield[int(terrain.width/4):int(3*terrain.width/4),int(terrain.width/4):int(3*terrain.width/4)]=-1
+    # heightfield[:,int(terrain.width/4):int(3*terrain.width/4)]=-1
+
     # for i in range(0,400,50):
     #     heightfield[i:i+35,:]=-100
 
