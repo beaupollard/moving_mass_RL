@@ -103,7 +103,7 @@ class PPOBuffer:
 
 
 def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10, 
-        steps_per_epoch=2*512, epochs=10000, gamma=0.99, clip_ratio=0.2, pi_lr=6e-4,
+        steps_per_epoch=2*512, epochs=10000, gamma=0.99, clip_ratio=0.2, pi_lr=2e-3,
         vf_lr=1e-4, train_pi_iters=5, train_v_iters=5, lam=0.98, max_ep_len=1000,
         target_kl=0.05, logger_kwargs=dict(), save_freq=10):
     """
@@ -239,9 +239,9 @@ def ppo(env, actor_critic=core.MLPActorCritic, ac_kwargs=dict(), seed=10,
 
     # Set up experience buffer
     # local_steps_per_epoch = int(steps_per_epoch / num_procs())
-    local_steps_per_epoch = int(50)#int(4*steps_per_epoch/env.num_envs)
+    local_steps_per_epoch = int(500)#int(4*steps_per_epoch/env.num_envs)
     buf = PPOBuffer(obs_dim, act_dim, local_steps_per_epoch, gamma, lam)
-    ent_weight=0.001
+    ent_weight=0.0001
     # Set up function for computing PPO policy loss
     def compute_loss_pi(data,ind=[]):
         if len(ind)==0:

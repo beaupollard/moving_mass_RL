@@ -16,7 +16,7 @@ if __name__ == '__main__':
     vel_rec=np.zeros((10000,4))
     state_rec=np.zeros((10000,5))
     i=0
-    a=0.01*torch.ones((128,5),dtype=torch.float32,device='cuda:0')
+    a=1.1*torch.ones((128,5),dtype=torch.float32,device='cuda:0')
     a[:,-1]=0.
     for i in range(10000):
         

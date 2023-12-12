@@ -24,6 +24,7 @@ class env():
         sim_parms.up_axis = gymapi.UpAxis.UP_AXIS_Z
         sim_parms.gravity = gymapi.Vec3(0.0, 0.0, -9.81)        
         sim_parms.dt = 0.02
+        self.dt = sim_parms.dt
         # gymapi.FlexParams.static_friction=1.0'robot_mvw.urdf'
         # gymapi.FlexParams.deterministic_mode=True 
         sim_parms.physx.num_velocity_iterations=5
@@ -88,8 +89,8 @@ class env():
         num_envs = int(2**7)#9
         actors_per_env = 1
         dofs_per_actor = 11
-        num_per_row = 6
-        spacing = 0.65
+        num_per_row = 3
+        spacing = 0.25
         env_lower = gymapi.Vec3(-spacing, 0.0, -spacing)
         env_upper = gymapi.Vec3(spacing, spacing, spacing)
         self.des_vel = torch.zeros((num_envs,2),dtype=torch.float,device=self.device)
@@ -130,8 +131,8 @@ class env():
         self.env_origin=torch.tensor(np.array(self.env_origin),device="cuda:0",dtype=torch.float32)
         # create all available terrain types
         num_terains = 1
-        terrain_width = 60.
-        terrain_length = 80.#160.
+        terrain_width = 45#60.
+        terrain_length = 30#80.#160.
         horizontal_scale = 0.1  # [m]
         vertical_scale = 0.4  # [m]
         num_rows = int(terrain_width/horizontal_scale)
@@ -164,8 +165,8 @@ class env():
         # tm_params.transform.p.y = -1.
         # tm_params.transform.r.w=math.cos(math.pi/4)
         # tm_params.transform.r.x=math.cos(math.pi/4)
-        off_x=-37.5#-22
-        off_y=-25.
+        off_x=-30.#-17.5#-37.5#-22
+        off_y=-10#-25.
         off_z=-0.4
       
         tm_params.transform.p.x = off_x
@@ -246,7 +247,7 @@ class env():
         # y_ind=torch.searchsorted(self.tt[0,:,1], x[1]+ypts).item()
         self.observation_space = torch.hstack((torch.hstack((self.tracked_states_vec,self.des_vel.unsqueeze(2))),self.scan_dot_buf.reshape(self.num_envs,-1,1)))
         self.action_space = torch.zeros((self.num_envs,5),dtype=torch.float,device=self.device) 
-        self.prev_vel = torch.zeros((self.num_envs,4),dtype=torch.float,device=self.device) 
+        self.prev_vel = torch.zeros((self.num_envs,5),dtype=torch.float,device=self.device) 
         self.prev_action = torch.zeros((self.num_envs,5),dtype=torch.float,device=self.device) 
         
 
@@ -260,8 +261,8 @@ class env():
 
     def _compute_reward(self):
         # pendulum position is 3
-        rew_speed=10.*torch.exp(-(self.tracked_states_vec[:,2]-self.des_vel[:,0])**2-(self.tracked_states_vec[:,3]-self.des_vel[:,1])**2)
-        rew_torque=-0.001*torch.norm(self.dof_forces[:,:4],dim=1).unsqueeze(dim=1)-0.00001*torch.abs(self.tracked_states_vec[:,-1]).unsqueeze(dim=1)
+        rew_speed=10.*torch.exp(-(self.tracked_states_vec[:,2]-self.des_vel[:,0].unsqueeze(1))**2-(self.tracked_states_vec[:,3]-self.des_vel[:,1].unsqueeze(1))**2)
+        rew_torque=-0.001*torch.norm(self.dof_forces[:,:4],dim=1).unsqueeze(dim=1)-0.00001*torch.abs(self.tracked_states_vec[:,-1])
         rew_ori=-0.001*self.tracked_states_vec[:,1]**2
         return rew_speed+rew_torque+rew_ori#torch.sum(torch.bmm(self.weights,(self.tracked_states_vec-self.des_state)),dim=1)#-0.1*torch.norm(self.dof_force[:,:4],dim=1).reshape((self.dof_force.size()[0]),1)
         
@@ -283,12 +284,12 @@ class env():
         # action=1*des_action*torch.ones((des_action.size()[0],4),device="cuda:0",dtype=torch.float32)
         # des_action=des_action*torch.ones((des_action.size()[0],5),device="cuda:0",dtype=torch.float32)
 
-        des_action[:,:-1]=kpv*(des_action[:,:-1]-self.dof_states_vec[:,:4,1])-kdv*(self.dof_states_vec[:,:4,1]-self.prev_vel)
+        des_action[:,:-1]=kpv*(des_action[:,:-1]-self.dof_states_vec[:,:4,1])-kdv*(self.dof_states_vec[:,:4,1]-self.prev_vel[:,:4])
         des_action[:,-1]=kpp*(des_action[:,-1]-self.dof_states_vec[:,-1,0])-kdp*(self.dof_states_vec[:,-1,1])
 
         # action=kp*(des_action*torch.ones((des_action.size()[0],4),device="cuda:0",dtype=torch.float32)-self.dof_states_vec[:,:4,1])-kd*(self.dof_states_vec[:,:4,1]-self.prev_vel)
         # action=kp*(des_action-self.dof_states_vec[:,:4,1])-kd*(self.dof_states_vec[:,:4,1]-self.prev_vel)
-        self.prev_vel=torch.clone(self.dof_states_vec[:,:4,1])
+        self.prev_vel=torch.clone(self.dof_states_vec[:,:,1])
         return des_action
 
     def step(self,action=[]):
@@ -298,7 +299,7 @@ class env():
             self.dof_force[:,:]=action_out
             forces_desc = gymtorch.unwrap_tensor(self.dof_force)
             self.gym.set_dof_actuation_force_tensor(self.sim,forces_desc)
-
+            self.prev_action = torch.clone(action)
         self.gym.simulate(self.sim)
         self.gym.fetch_results(self.sim, True)
         self._refresh_state()
@@ -323,11 +324,12 @@ class env():
         current_dof_state=torch.clone(self.dof_states_vec)
         for i in idx:
             current_root_state[i,:]=torch.clone(self.prev_root_state[i])
-            theta=3.14*(torch.rand((1),dtype=torch.float,device=self.device)-0.5)
-            current_root_state[i,5]=torch.sin(theta/2)
-            current_root_state[i,6]=torch.cos(theta/2)
-            theta_vel=3.14*(torch.rand((1),dtype=torch.float,device=self.device)-0.5)
-            self.des_vel[i,0] = 1.5*(torch.rand((1),dtype=torch.float,device=self.device)+1)
+            theta=0*(torch.rand((1),dtype=torch.float,device=self.device)-0.5)
+            # current_root_state[i,5]=torch.sin(theta/2)
+            # current_root_state[i,6]=torch.cos(theta/2)
+            theta_vel=10*3.14/180.*(torch.rand((1),dtype=torch.float,device=self.device)-0.5)
+            self.des_vel[i,0] = 2.0#1.5*(torch.rand((1),dtype=torch.float,device=self.device)+1)*torch.cos(theta_vel)
+            self.des_vel[i,1] = 0.#1.5*(torch.rand((1),dtype=torch.float,device=self.device)+1)*torch.sin(theta_vel)
             
             # current_dof_state[i,:,:]=torch.clone(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)[i]+3.14)
             # current_dof_state[i,:,:]=torch.clone(self.prev_dof_state.view(self.num_envs,self.num_dofs,2)[i]-1.5*(torch.rand((self.num_dofs,2),dtype=torch.float,device=self.device)-0.5))
